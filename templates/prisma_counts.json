@@ -1,0 +1,16 @@
+{
+  "_instructions": "Fill every null. Leave a value null ONLY if the number was never recorded; the diagram will print 'not retained' for it. Do not estimate.",
+  "search_string": null,
+  "search_date": null,
+  "databases": ["Scopus"],
+  "filters": "English; journal articles only; 2020-2025",
+  "identified": 2198,
+  "duplicates_removed": null,
+  "screened_title_abstract": null,
+  "excluded_title_abstract": null,
+  "excluded_title_abstract_reasons": {"off topic": null, "not empirical": null, "wrong document type": null},
+  "fulltext_assessed": null,
+  "fulltext_excluded": null,
+  "fulltext_excluded_reasons": {"no ESG performance focus": null, "insufficient detail to code": null, "full text unavailable": null},
+  "included": 1026
+}
