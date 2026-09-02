@@ -65,8 +65,44 @@ def test_render_refuses_to_invent(tmp_path):
                "screened_title_abstract": None, "excluded_title_abstract": None,
                "fulltext_assessed": None, "fulltext_excluded": None}
     labels = fig_prisma.box_labels(partial)
-    assert any("not retained" in l for l in labels)
+    assert any(fig_prisma.UNKNOWN in l for l in labels)
     assert not any("1172" in l for l in labels)   # 2198-1026, the tempting fabrication
+
+
+def test_footer_never_prints_a_bare_unknown_search_date():
+    """A stamp reading 'search date: not recorded' conveys nothing and reads as
+    a rendering fault; the footer must state the coverage that IS known and say
+    once, in words, why the stage counts are absent."""
+    partial = {"identified": 2198, "included": 1026, "duplicates_removed": None,
+               "screened_title_abstract": None, "excluded_title_abstract": None,
+               "fulltext_assessed": None, "fulltext_excluded": None,
+               "databases": ["Scopus"], "filters": "English; journal articles only; 2020-2025",
+               "search_string": None, "search_date": None}
+    footer = " ".join(fig_prisma.footer_lines(partial))
+    assert f"Search date: {fig_prisma.UNKNOWN}" not in footer
+    assert "Source: Scopus" in footer
+    assert "2020-2025" in footer
+    assert "not estimated" in footer          # explains the boxes once, in prose
+    assert "not archived" in footer           # explains the missing query/date
+
+
+def test_footer_reports_a_search_date_when_one_is_known():
+    known = {"identified": 2198, "included": 1026, "duplicates_removed": 198,
+             "screened_title_abstract": 2000, "excluded_title_abstract": 700,
+             "fulltext_assessed": 1300, "fulltext_excluded": 274,
+             "databases": ["Scopus"], "filters": "English; journal articles only; 2020-2025",
+             "search_string": "TITLE-ABS-KEY(esg)", "search_date": "2025-06-14"}
+    footer = " ".join(fig_prisma.footer_lines(known))
+    assert "Search date: 2025-06-14" in footer
+    # nothing is missing, so neither explanatory line should appear
+    assert "not estimated" not in footer
+    assert "not archived" not in footer
+
+
+def test_footer_lines_stay_within_the_wrap_width():
+    counts = fig_prisma.load_counts("templates/prisma_counts.json")
+    for line in fig_prisma.footer_lines(counts):
+        assert len(line) <= fig_prisma.FOOTER_WRAP_CHARS, f"footer line too wide: {line!r}"
 
 def test_render_includes_exclusion_reasons_when_present(tmp_path):
     """Verify exclusion reasons are displayed in the diagram when populated."""

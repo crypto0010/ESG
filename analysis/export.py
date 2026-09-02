@@ -69,9 +69,13 @@ SPECS = {
               "tab:stats", "tab_stats.tex"),
     "convergence": ("Convergence of importance methods (internal consistency check)",
                     "tab:convergence", "tab_convergence.tex"),
+    "reliability": ("Inter-rater reliability: quadratic-weighted Cohen's kappa and "
+                    "ICC(2,1) (two-way random effects, absolute agreement, single "
+                    "rater), by sub-dimension and dimension",
+                    "tab:reliability", "tab_reliability.tex"),
 }
 
-LONGTABLE_KEYS = {"loadings", "descriptives", "stats"}
+LONGTABLE_KEYS = {"loadings", "descriptives", "stats", "reliability"}
 
 # `stats_table`'s row order carries no meaning (it is sorted by p_adj) once
 # the (a, b) model-pair columns already identify each row, so its DataFrame
@@ -115,6 +119,7 @@ FLOAT_FORMATS = {
     "sensitivity": {"vs Spearman": "{:.3f}", "vs polychoric": "{:.3f}"},
     "factor_reliability": {"bootstrap_congruence": "{:.3f}", "split_half_congruence": "{:.3f}"},
     "loadings": _loadings_float_format,
+    "reliability": {"percent_agreement": "{:.3f}", "kappa": "{:.3f}", "icc": "{:.3f}"},
 }
 
 
@@ -511,6 +516,45 @@ def external_table(coverage: dict, correspondence: dict) -> pd.DataFrame:
         ("Literature model comparator", f"{correspondence['literature_model_value']:.3f}"),
     ]
     return pd.DataFrame(rows, columns=["statistic", "value"]).set_index("statistic")
+
+
+def reliability_table(table: pd.DataFrame) -> pd.DataFrame:
+    """`reliability.reliability_table`'s per-code / per-dimension / OVERALL
+    frame, with a readable sub-dimension label inserted (same pattern as
+    `descriptives_table`) -- dimension-letter and OVERALL rows get no label,
+    matching `config.SUBDIMENSIONS.get(idx, "")`'s default for any index
+    that is not a sub-dimension code.
+    """
+    out = table.copy()
+    out.insert(0, "label", [config.SUBDIMENSIONS.get(idx, "") for idx in out.index])
+    return out[["label", "n", "percent_agreement", "kappa", "icc"]]
+
+
+def reliability_caption(bootstrap: dict, recall: dict) -> str:
+    """Build tab_reliability's caption from the actual double-coding result
+    -- the pooled quadratic-weighted kappa and ICC(2,1), each with a BCa
+    interval bootstrapped by resampling articles (`reliability.
+    bootstrap_overall`) -- rather than a fixed string, matching
+    `sensitivity_caption` / `convergence_caption` / `external_caption`'s
+    pattern. Reports the coder recall-flag count (`reliability.
+    recall_flags`) alongside the statistics: re-using the original coders
+    for double coding risks memory contamination, a disclosed limitation
+    rather than a silent one.
+    """
+    k, k_lo, k_hi = bootstrap["kappa"], bootstrap["kappa_lo"], bootstrap["kappa_hi"]
+    icc, i_lo, i_hi = bootstrap["icc"], bootstrap["icc_lo"], bootstrap["icc_hi"]
+    n = bootstrap["n_articles"]
+    n_flags = recall["total_flags"]
+    return (
+        f"Inter-rater reliability (n = {n} double-coded articles): pooled "
+        f"quadratic-weighted Cohen's kappa = {k:.3f} (95\\% BCa CI [{k_lo:.3f}, "
+        f"{k_hi:.3f}]) and ICC(2,1), two-way random effects, absolute agreement "
+        f"= {icc:.3f} (95\\% BCa CI [{i_lo:.3f}, {i_hi:.3f}]), each bootstrapped "
+        f"by resampling articles. {n_flags} article(s) were flagged by a coder "
+        "as one whose original score they recalled -- a disclosed limitation of "
+        "re-using the original coders for double coding, not a correction applied "
+        "to the statistics above."
+    )
 
 
 def external_caption(correspondence: dict) -> str:

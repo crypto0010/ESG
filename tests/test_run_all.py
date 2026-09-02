@@ -111,16 +111,110 @@ def test_quick_run_writes_under_figures_and_manuscript_tables(tmp_path):
 
 
 def test_run_reports_skipped_gated_stages(tmp_path):
-    """Reliability (Task 12, gated on input I2) still has no upstream module
-    and must be disclosed in `skipped`, not silently absent. External
-    validation (Task 18, gated on input I1) is no longer skipped now that
-    I1 has arrived (`data/` is committed) - see
+    """Reliability (Task 12) now has an upstream module, but I2 (the
+    completed double-coding workbook) has not arrived - both expert sheets
+    in the committed `templates/IRR_double_coding.xlsx` are still entirely
+    blank - so it must still be disclosed in `skipped`, not silently
+    absent. External validation (Task 18, gated on input I1) is no longer
+    skipped now that I1 has arrived (`data/` is committed) - see
     `test_run_runs_external_validation_now_that_i1_has_arrived` below."""
     out = run_all.main(quick=True, out_root=tmp_path)
     assert "skipped" in out
     assert all(isinstance(s, str) for s in out["skipped"])
     joined = " ".join(out["skipped"]).lower()
     assert "reliability" in joined
+
+
+def test_skipped_reliability_reason_distinguishes_absent_from_uncoded(tmp_path):
+    """The skip reason must say WHY reliability is unavailable, not just
+    that it is: 'workbook absent' and 'workbook present but not yet coded'
+    are different situations for a reader of the disclosure to understand,
+    and the real committed workbook is the latter (present, both sheets
+    still blank)."""
+    out = run_all.main(quick=True, out_root=tmp_path)
+    reliability_reasons = [s for s in out["skipped"] if "reliability" in s.lower()]
+    assert len(reliability_reasons) == 1
+    reason = reliability_reasons[0].lower()
+    assert "not yet been coded" in reason or "not yet coded" in reason
+    assert "absent" not in reason
+
+    assert run_all._reliability_unavailable_reason(None) == (
+        "the double-coding workbook is present "
+        f"({run_all.config.TEMPLATES / 'IRR_double_coding.xlsx'}) but has not yet "
+        "been coded - both expert sheets are still blank"
+    )
+
+
+def test_reliability_unavailable_reason_says_absent_when_the_workbook_is_missing(
+    tmp_path, monkeypatch
+):
+    from analysis import config as _config
+    monkeypatch.setattr(_config, "TEMPLATES", tmp_path)
+    reason = run_all._reliability_unavailable_reason(None)
+    assert "absent" in reason
+    assert "not yet been coded" not in reason
+
+
+def test_run_uses_reliability_data_once_it_arrives_without_corrupting_factor_reliability(
+    tmp_path, monkeypatch
+):
+    """Regression guard: an earlier draft named the double-coding
+    `reliability.reliability_table(...)` result `reliability_tbl` - the same
+    name `factors.reliability(df, assignment)`'s output already used
+    upstream for `factor_reliability_table`. Since this whole stage is
+    normally skipped (I2 has not arrived), that collision was invisible to
+    every other test; it would have silently corrupted
+    `tab_factor_reliability.tex` the moment real double-coded data landed.
+    This builds a fully (uniformly) coded synthetic workbook, points
+    `config.TEMPLATES` at it, and checks BOTH tables come out right."""
+    import openpyxl
+    from analysis import config as _config
+    from analysis import loading, sampling
+
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+    # `main()` also reads prisma_counts.json from config.TEMPLATES.
+    import shutil
+    shutil.copy(_config.TEMPLATES / "prisma_counts.json", templates_dir / "prisma_counts.json")
+
+    sample = sampling.stratified_subsample(loading.load_scoring(), frac=0.02)
+    irr_path = sampling.write_coding_workbook(sample, templates_dir / "IRR_double_coding.xlsx")
+    wb = openpyxl.load_workbook(irr_path)
+    n_rows = len(sample)
+    # Real variance per sub-dimension column (not a flat constant): a
+    # column where every article gets the exact same score has zero
+    # variance, which makes ICC(2,1) mathematically undefined (0/0), not
+    # just uninteresting - reliability.icc21 correctly raises on that, so a
+    # constant fixture would fail here for the right reason but for the
+    # wrong test.
+    values = [[(r + c) % 6 for c in range(len(_config.SCORE_COLS))] for r in range(n_rows)]
+    for sheet_name in ("Expert A", "Expert B"):
+        ws = wb[sheet_name]
+        header = [c.value for c in ws[1]]
+        first = header.index(_config.SCORE_COLS[0])
+        for r, row_values in enumerate(values):
+            for c, v in enumerate(row_values):
+                ws.cell(row=2 + r, column=first + 1 + c).value = v
+    wb.save(irr_path)
+
+    monkeypatch.setattr(_config, "TEMPLATES", templates_dir)
+
+    out = run_all.main(quick=True, out_root=tmp_path / "out")
+
+    joined = " ".join(out["skipped"]).lower()
+    assert "reliability" not in joined
+    assert "reliability" in out["tables"]
+    assert Path(out["tables"]["reliability"]).exists()
+
+    # factor_reliability must still be the factor model's own table, not
+    # silently overwritten by the double-coding reliability table.
+    assert "factor_reliability" in out["tables"]
+    factor_reliability_text = Path(out["tables"]["factor_reliability"]).read_text(
+        encoding="utf-8")
+    assert "cronbach" in factor_reliability_text.lower() \
+        or "mcdonald" in factor_reliability_text.lower()
+    reliability_text = Path(out["tables"]["reliability"]).read_text(encoding="utf-8")
+    assert "kappa" in reliability_text.lower()
 
 
 def test_run_runs_external_validation_now_that_i1_has_arrived(tmp_path):

@@ -13,15 +13,21 @@ Gated stages - inter-rater reliability (`analysis.reliability`, Task 12,
 waits on input I2) and external validation (`analysis.external`, Task 18,
 waits on input I1) - are each skipped, not failed, when their upstream
 module is absent or its own `is_available()` says its gate input has not
-arrived. `analysis.reliability` still does not exist (I2 has not arrived),
-so that stage is still reported in `skipped`. `analysis.external` landed
-once I1 (the LSEG/Refinitiv firm-level extract under `data/`) arrived: when
-`data/` is present, Study 2's firm-level coverage report and
-governance-disclosure correspondence check (against the literature model's
-F1-F2 factor correlation - a correspondence check, never validation of the
-literature model's substantive claims) run as part of this pipeline,
-producing `tab_external` and `fig8_external.pdf`; when `data/` is absent,
-external validation is skipped exactly like reliability.
+arrived. `analysis.reliability` exists, but I2 (the completed double-coding
+workbook, `templates/IRR_double_coding.xlsx`) has not arrived: both expert
+sheets are still entirely blank, so `is_available()` is False and the stage
+is skipped, with a reason that distinguishes "workbook absent" from
+"workbook present but not yet coded" (`_reliability_unavailable_reason`).
+Once both sheets are coded, this pipeline computes the pooled
+quadratic-weighted kappa and ICC(2,1) (with an article-resampled BCa
+interval) and the coder recall-flag count, producing `tab_reliability`.
+`analysis.external` landed once I1 (the LSEG/Refinitiv firm-level extract
+under `data/`) arrived: when `data/` is present, Study 2's firm-level
+coverage report and governance-disclosure correspondence check (against the
+literature model's F1-F2 factor correlation - a correspondence check, never
+validation of the literature model's substantive claims) run as part of
+this pipeline, producing `tab_external` and `fig8_external.pdf`; when
+`data/` is absent, external validation is skipped exactly like reliability.
 
 Caching: the genuinely expensive stages (the EFA bootstrap/parallel-analysis
 robustness checks, the polychoric-basis sensitivity check, the predictive
@@ -94,17 +100,25 @@ def _cache_parallel_analysis(cache_dir, compute, use_cache) -> dict:
     return pa
 
 
-def _gated_stage(module_name: str, human_name: str, gate_check, skipped: list):
+def _gated_stage(module_name: str, human_name: str, gate_check, skipped: list,
+                 unavailable_reason=None):
     """Try a gated upstream module (`analysis.reliability`, `analysis.external`).
 
-    `analysis.reliability` still does not exist (Task 12 is pending on
-    input I2), so the ImportError branch is its common case today.
     `analysis.external` (Task 18) has landed: once its own `is_available()`
     reports its data directory is present, the `gate_check` branch returns
     the module and the caller runs Study 2; when the data directory is
     absent, `gate_check` returns False and the stage is skipped exactly
     like an unimplemented module, matching each gated module's own
     `is_available(path)` contract either way.
+
+    `analysis.reliability` (Task 12) has also landed, but stays gated on
+    input I2 (the completed double-coding workbook): as of this writing
+    both expert sheets are entirely blank, so `is_available()` is False and
+    the stage is still skipped. `unavailable_reason(module)`, when given,
+    replaces the generic "gate input has not arrived" message with
+    something more specific - `reliability` uses it to distinguish "the
+    workbook is absent" from "the workbook is present but not yet coded",
+    which a bare boolean `is_available()` cannot convey on its own.
     """
     try:
         module = __import__(f"analysis.{module_name}", fromlist=[module_name])
@@ -117,9 +131,19 @@ def _gated_stage(module_name: str, human_name: str, gate_check, skipped: list):
         skipped.append(f"{human_name}: could not check availability ({exc})")
         return None
     if not available:
-        skipped.append(f"{human_name}: analysis.{module_name} is implemented but its gate input has not arrived")
+        reason = (unavailable_reason(module) if unavailable_reason is not None else
+                  f"analysis.{module_name} is implemented but its gate input has not arrived")
+        skipped.append(f"{human_name}: {reason}")
         return None
     return module
+
+
+def _reliability_unavailable_reason(module) -> str:
+    path = config.TEMPLATES / "IRR_double_coding.xlsx"
+    if not path.exists():
+        return f"the double-coding workbook is absent (expected at {path})"
+    return (f"the double-coding workbook is present ({path}) but has not yet "
+           "been coded - both expert sheets are still blank")
 
 
 def main(quick=False, out_root=None) -> dict:
@@ -197,12 +221,27 @@ def main(quick=False, out_root=None) -> dict:
     scan = clustering.silhouette_scan(df, K_RANGE)
 
     # ---- gated stages ----
-    _gated_stage("reliability", "reliability",
-                lambda m: m.is_available(config.TEMPLATES / "IRR_double_coding.xlsx"),
-                skipped)
+    reliability_module = _gated_stage(
+        "reliability", "reliability",
+        lambda m: m.is_available(config.TEMPLATES / "IRR_double_coding.xlsx"),
+        skipped, unavailable_reason=_reliability_unavailable_reason)
     external_module = _gated_stage("external", "external validation",
                                    lambda m: m.is_available(),
                                    skipped)
+
+    # Named `irr_*` (inter-rater reliability), never `reliability_*` alone -
+    # `reliability_tbl` (set above, from `factors.reliability`) already
+    # names the UNRELATED factor-reliability table `factor_reliability_table`
+    # reads; reusing that name here would silently overwrite it whenever
+    # this gated stage actually runs.
+    irr_reliability_tbl = irr_bootstrap = irr_recall = None
+    if reliability_module is not None:
+        irr_path = config.TEMPLATES / "IRR_double_coding.xlsx"
+        expert_a, expert_b = reliability_module.load_double_coding(irr_path)
+        irr_reliability_tbl = reliability_module.reliability_table(expert_a, expert_b)
+        irr_bootstrap = reliability_module.bootstrap_overall(
+            expert_a, expert_b, n_boot=200 if quick else 2000)
+        irr_recall = reliability_module.recall_flags(irr_path)
 
     external_firm_df = external_coverage = external_correspondence = None
     if external_module is not None:
@@ -254,6 +293,9 @@ def main(quick=False, out_root=None) -> dict:
     if external_module is not None:
         context["external"] = export.external_table(external_coverage, external_correspondence)
         context["external_caption"] = export.external_caption(external_correspondence)
+    if reliability_module is not None:
+        context["reliability"] = export.reliability_table(irr_reliability_tbl)
+        context["reliability_caption"] = export.reliability_caption(irr_bootstrap, irr_recall)
     tables = export.write_all(context, out_dir=roots["tables"])
 
     return {

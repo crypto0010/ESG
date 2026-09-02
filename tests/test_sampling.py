@@ -37,7 +37,8 @@ def test_expert_sheets_have_blank_score_cells(tmp_path):
     ws = wb["Expert A"]
     header = [c.value for c in ws[1]]
     assert header[:4] == ["SR.NO", "YEAR", "TITLE", "ABSTRACT"]
-    assert header[4:] == config.SCORE_COLS
+    assert header[4:-1] == config.SCORE_COLS
+    assert header[-1] == "Notes"
     for row in ws.iter_rows(min_row=2, min_col=5):
         assert all(c.value is None for c in row)
 

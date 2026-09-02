@@ -22,7 +22,11 @@ _INSTRUCTIONS = [
     "2. Code every one of the 44 sub-dimensions for every article listed.",
     "3. Use only whole numbers 0-5. See the Codebook sheet for the anchors.",
     "4. Leave nothing blank. If an article does not address a sub-dimension, enter 0.",
-    "5. Return the file with both sheets completed.",
+    "5. If you recognise an article and recall the score it originally received,",
+    "   write RECALL in the Notes column for that row. This is not a problem - it is",
+    "   disclosed as a limitation of re-using the original coders - but it must be",
+    "   recorded, not silently absorbed into the score.",
+    "6. Return the file with both sheets completed.",
     "",
     "The articles below are a stratified random sample of the 1,026-article corpus,",
     "drawn proportionally by publication year with a fixed seed.",
@@ -65,7 +69,7 @@ def write_coding_workbook(sample, path) -> Path:
 
     for expert in ("Expert A", "Expert B"):
         sh = wb.create_sheet(expert)
-        sh.append(["SR.NO", "YEAR", "TITLE", "ABSTRACT"] + config.SCORE_COLS)
+        sh.append(["SR.NO", "YEAR", "TITLE", "ABSTRACT"] + config.SCORE_COLS + ["Notes"])
         for cell in sh[1]:
             cell.font = Font(bold=True)
             cell.alignment = Alignment(textRotation=90, vertical="bottom")
@@ -81,6 +85,8 @@ def write_coding_workbook(sample, path) -> Path:
         sh.column_dimensions["D"].width = 80
         for j in range(5, 5 + len(config.SCORE_COLS)):
             sh.column_dimensions[get_column_letter(j)].width = 6
+        notes_col = get_column_letter(5 + len(config.SCORE_COLS))
+        sh.column_dimensions[notes_col].width = 40
 
         # Add data validation for score cells
         dv = DataValidation(

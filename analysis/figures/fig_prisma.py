@@ -1,4 +1,4 @@
-"""PRISMA 2020 flow diagram. Unknown counts print 'not retained', never a guess."""
+"""PRISMA 2020 flow diagram. Unknown counts print 'not recorded', never a guess."""
 import json
 import textwrap
 from pathlib import Path
@@ -8,7 +8,15 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 from . import style
 
-UNKNOWN = "not retained"
+UNKNOWN = "not recorded"
+
+# Vertical spacing between the footer lines beneath the diagram, in axis units.
+FOOTER_LINE_GAP = 0.45
+
+# Characters per footer line before wrapping. The axes are 10 units wide and
+# the footer prints at fontsize 8; beyond roughly this width a line runs past
+# the figure's trimmed bounding box.
+FOOTER_WRAP_CHARS = 88
 
 
 def load_counts(path) -> dict:
@@ -40,6 +48,46 @@ def _format_exclusion_box(count, reasons_dict: dict) -> str:
                 text += f"\n{wrapped}"
 
     return text
+
+
+STAGE_KEYS = ("duplicates_removed", "screened_title_abstract",
+              "excluded_title_abstract", "fulltext_assessed", "fulltext_excluded")
+
+
+def footer_lines(counts: dict) -> list[str]:
+    """Provenance lines printed under the diagram.
+
+    A bare "search date: not recorded" stamp tells a reader nothing and reads
+    as a rendering fault. When the date is unavailable, state instead what the
+    record does establish -- the database searched and the coverage the query
+    was restricted to -- and explain the absent stage counts once, rather than
+    leaving the boxes to imply it six times over.
+    """
+    databases = ", ".join(counts.get("databases") or ["Scopus"])
+    filters = (counts.get("filters") or "").strip()
+
+    provenance = f"Source: {databases}."
+    date = counts.get("search_date")
+    if date:
+        provenance += f" Search date: {date}."
+    if filters:
+        provenance += f" Coverage: {filters}."
+
+    lines = [provenance]
+    if any(counts.get(k) is None for k in STAGE_KEYS):
+        lines.append(f"Stages shown as '{UNKNOWN}' were not preserved "
+                     "in the original screening record and are not estimated.")
+    if not date:
+        lines.append("The exact query string and search date were not archived; "
+                     "the included records are listed in Supplementary Data B.")
+
+    # The axes are 10 units wide at fontsize 8; anything much past this wraps
+    # outside the figure's trimmed bounding box.
+    wrapped = []
+    for line in lines:
+        wrapped.extend(textwrap.wrap(line, width=FOOTER_WRAP_CHARS) or [""])
+    return wrapped
+
 
 
 def validate(counts: dict) -> list[str]:
@@ -155,7 +203,8 @@ def build_figure(counts: dict):
     side_bottom_edge = side_y[-1] - side_heights[-1] / 2 - BOX_PAD
     content_bottom = min(main_bottom_edge, side_bottom_edge)
     stamp_y = content_bottom - STAMP_MARGIN
-    ylim_bottom = min(0.0, stamp_y - AXIS_MARGIN)
+    footer_depth = (len(footer_lines(counts)) - 1) * FOOTER_LINE_GAP
+    ylim_bottom = min(0.0, stamp_y - footer_depth - AXIS_MARGIN)
 
     y_range = BASE_YLIM_TOP - ylim_bottom
     fig_height = BASE_FIGSIZE[1] * y_range / BASE_YLIM_RANGE
@@ -190,9 +239,9 @@ def build_figure(counts: dict):
     for (x, y, _), (sx, sy, _, _) in zip(main[:3], side):
         arrow(x + 1.85, (y + sy) / 2 + 0.35, sx - 1.65, sy)
 
-    stamp = counts.get("search_date")
-    ax.text(5, stamp_y, f"Scopus search date: {stamp or UNKNOWN}",
-            ha="center", fontsize=8, color="#5a6672")
+    for i, line in enumerate(footer_lines(counts)):
+        ax.text(5, stamp_y - i * FOOTER_LINE_GAP, line,
+                ha="center", fontsize=8, color="#5a6672")
 
     return fig, ax, text_artists, box_patches
 

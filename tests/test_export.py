@@ -243,14 +243,15 @@ def test_write_table_float_format_accepts_a_callable_for_conditional_markup(tmp_
     assert "0.10" in text
 
 
-def test_specs_covers_exactly_the_ten_manuscript_tables():
-    """Ten, not nine: 'external' (tab_external.tex, Task 18) was added once
-    author input I1 arrived - Study 2's firm-level coverage and
-    governance-disclosure correspondence check now has a table too."""
+def test_specs_covers_exactly_the_eleven_manuscript_tables():
+    """Eleven, not ten: 'reliability' (tab_reliability.tex, Task 12) was
+    added alongside `analysis.reliability` - the module exists now, even
+    though its own gate input (the completed double-coding workbook) has
+    not arrived yet, so the table is written only once that data lands."""
     assert set(export.SPECS) == {
         "factorability", "loadings", "factor_reliability", "sensitivity",
         "descriptives", "model_spec", "benchmark", "stats", "convergence",
-        "external",
+        "external", "reliability",
     }
 
 
@@ -266,6 +267,7 @@ def test_specs_filenames_match_the_task_14_dispatch():
         "stats": "tab_stats.tex",
         "convergence": "tab_convergence.tex",
         "external": "tab_external.tex",
+        "reliability": "tab_reliability.tex",
     }
     for key, filename in expected_files.items():
         assert export.SPECS[key][2] == filename
@@ -277,7 +279,7 @@ def test_convergence_spec_caption_says_internal_consistency_check_not_validation
     assert "valid" not in caption.lower()
 
 
-def test_write_all_writes_only_the_nine_specified_tables_when_all_present(tmp_path):
+def test_write_all_writes_every_specified_table_when_all_present(tmp_path):
     ctx = {k: pd.DataFrame({"x": [1.0]}, index=["r1"]) for k in export.SPECS}
     written = export.write_all(ctx, out_dir=tmp_path)
     assert set(written) == set(export.SPECS)
@@ -705,4 +707,69 @@ def test_external_caption_differs_when_the_correspondence_data_differs():
     other["partial_correlation"] = 0.02
     other["ci_lo"], other["ci_hi"] = -0.05, 0.09
     b = export.external_caption(other)
+    assert a != b
+
+
+# --------------------------------------------------------------------------
+# reliability_table / reliability_caption (Task 12, tab_reliability)
+# --------------------------------------------------------------------------
+
+def _synthetic_reliability_table():
+    from analysis import config as _config, reliability
+    n = 20
+    rng = np.random.default_rng(_config.SEED)
+    ea = pd.DataFrame({c: rng.integers(0, 6, n).astype(float) for c in _config.SCORE_COLS})
+    eb = ea.copy()
+    return reliability.reliability_table(ea, eb)
+
+
+def _synthetic_reliability_bootstrap():
+    return {"n_articles": 51, "n_boot": 2000, "kappa": 0.812, "kappa_lo": 0.741,
+           "kappa_hi": 0.869, "icc": 0.855, "icc_lo": 0.793, "icc_hi": 0.901}
+
+
+def _synthetic_recall():
+    return {"per_sheet": {"Expert A": {"count": 1, "articles": [69]},
+                          "Expert B": {"count": 0, "articles": []}},
+           "total_flags": 1, "articles_flagged_by_either": [69]}
+
+
+def test_reliability_table_adds_a_readable_label_for_subdimension_rows():
+    from analysis import config as _config
+    t = export.reliability_table(_synthetic_reliability_table())
+    assert "label" in t.columns
+    assert t.loc["A-D1", "label"] == _config.SUBDIMENSIONS["A-D1"]
+    assert t.loc["OVERALL", "label"] == ""
+    assert t.loc["A", "label"] == ""
+
+
+def test_reliability_table_keeps_the_original_columns():
+    t = export.reliability_table(_synthetic_reliability_table())
+    assert list(t.columns) == ["label", "n", "percent_agreement", "kappa", "icc"]
+
+
+def test_reliability_spec_registered_with_the_right_filename_and_label():
+    assert export.SPECS["reliability"][2] == "tab_reliability.tex"
+    assert export.SPECS["reliability"][1] == "tab:reliability"
+
+
+def test_reliability_spec_caption_names_weighted_kappa_and_icc():
+    caption = export.SPECS["reliability"][0].lower()
+    assert "kappa" in caption
+    assert "icc" in caption
+
+
+def test_reliability_caption_reports_actual_numbers_not_hardcoded():
+    caption = export.reliability_caption(_synthetic_reliability_bootstrap(), _synthetic_recall())
+    assert "0.812" in caption
+    assert "0.855" in caption
+    assert "51" in caption
+    assert "1 article" in caption or " 1 " in caption
+
+
+def test_reliability_caption_differs_when_the_bootstrap_data_differs():
+    a = export.reliability_caption(_synthetic_reliability_bootstrap(), _synthetic_recall())
+    other = dict(_synthetic_reliability_bootstrap())
+    other["kappa"], other["kappa_lo"], other["kappa_hi"] = 0.30, 0.10, 0.48
+    b = export.reliability_caption(other, _synthetic_recall())
     assert a != b
